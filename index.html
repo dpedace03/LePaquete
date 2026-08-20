@@ -671,14 +671,38 @@
    (Supabase → Project Settings → API)
    ============================================================ */
 const SUPABASE_URL = 'https://ifnvndqudynyngeuiytd.supabase.co';        // ej: https://xxxx.supabase.co
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlmbnZuZHF1ZHlueW5nZXVpeXRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwNjY2MzIsImV4cCI6MjA5NTY0MjYzMn0.s7t8X9GHk-VqHIP9g7XcHgXtSY344ygiwVDGyZkwvnI';   // ej: eyJhbGciOi...
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlmbnZuZHF1ZHlueW5nZXVpeXRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwNjY2MzIsImV4cCI6MjA5NTY0MjYzMn0.s7t8X9GHk-VqHIP9g7XcHgXtSY344ygiwVDGyZkwvnI';   // ej: sb_publishable_... o eyJ...
+// Podés dejarlas vacías y conectar desde la app (botón "Conectar a Supabase"),
+// que guarda las credenciales en ESTE dispositivo (localStorage).
+let SB_URL = SUPABASE_URL, SB_KEY = SUPABASE_ANON_KEY;
+try{ if(!SB_URL) SB_URL = localStorage.getItem('sb_url')||''; if(!SB_KEY) SB_KEY = localStorage.getItem('sb_key')||''; }catch(e){}
 let sb = null;
 try{
-  if(SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase && window.supabase.createClient){
-    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  if(SB_URL && SB_KEY && window.supabase && window.supabase.createClient){
+    sb = window.supabase.createClient(SB_URL, SB_KEY);
   }
 }catch(e){ sb=null; }
 function cloudEnabled(){ return !!sb; }
+function conectarNube(){
+  openModal(`
+    <h3>Conectar a Supabase</h3>
+    <div class="ph-sub" style="margin-bottom:12px">Pegá el <b>Project URL</b> y la <b>clave pública</b> (anon / publishable). Se guardan en este dispositivo.</div>
+    <div class="field"><label>Project URL</label><input id="sbUrl" placeholder="https://xxxx.supabase.co" value="${esc(SB_URL||'')}"></div>
+    <div class="field"><label>Anon / Publishable key</label><input id="sbKey" placeholder="sb_publishable_...  ó  eyJ..." value="${esc(SB_KEY||'')}"></div>
+    <div class="hint" style="margin-bottom:8px">La sacás de Supabase → Settings → API Keys. La clave pública es segura para el navegador.</div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarNube()">Conectar</button>
+    </div>`);
+}
+function guardarNube(){
+  const u=(val('sbUrl')||'').trim().replace(/\/+$/,''); const k=(val('sbKey')||'').trim();
+  if(!u||!k){toast('⚠ Completá URL y key');return;}
+  if(!/^https:\/\/.+\.supabase\.co/.test(u)){toast('⚠ La URL debería ser https://xxxx.supabase.co');return;}
+  try{ localStorage.setItem('sb_url',u); localStorage.setItem('sb_key',k); }catch(e){}
+  toast('✓ Guardado, reconectando…'); setTimeout(()=>location.reload(),700);
+}
+function desconectarNube(){ if(!confirm('¿Desconectar Supabase en este dispositivo y volver a modo local?'))return; try{localStorage.removeItem('sb_url');localStorage.removeItem('sb_key');}catch(e){} location.reload(); }
 
 const MONEDA = new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0});
 const money = n => MONEDA.format(Math.round(n));
@@ -1578,7 +1602,7 @@ function renderAdmin(){
     </div>
     ${cloudEnabled()
         ? '<div class="hint" style="margin:-6px 0 12px;color:var(--verde);font-weight:600">☁️ Conectado a Supabase — datos compartidos y en vivo.</div>'
-        : '<div class="store-closed" style="margin:-2px 0 12px">📴 <b>Modo LOCAL</b> (sin Supabase): los usuarios y pedidos se guardan solo en <b>este dispositivo</b> y no se ven en otros. Cargá SUPABASE_URL y ANON_KEY para compartir.</div>'}
+        : '<div class="store-closed" style="margin:-2px 0 12px">📴 <b>Modo LOCAL</b> (sin Supabase): los usuarios y pedidos se guardan solo en <b>este dispositivo</b>.<div style="margin-top:8px"><button class="btn btn-ghost" style="width:auto;padding:8px 14px" onclick="conectarNube()">🔗 Conectar a Supabase</button></div></div>'}
     <div id="adminBody"></div>`;
   if(t==='pedidos')renderPedidos();
   else if(t==='productos')renderProductosAdmin();
@@ -2827,8 +2851,8 @@ function fallbackCopy(text,cb){ try{const t=document.createElement('textarea');t
 /* ---- Datos: JSON + Excel + reset ---- */
 function cfgDatos(){
   const nube = cloudEnabled()
-    ? `<div class="hint" style="color:var(--verde);font-weight:600">☁️ Conectado a Supabase (${(SUPABASE_URL||'').replace('https://','').slice(0,24)}…)</div>`
-    : `<div class="store-closed">📴 Modo LOCAL: SUPABASE_URL / ANON_KEY vacías. Editá el HTML y pegá tus credenciales para compartir usuarios y pedidos entre dispositivos.</div>`;
+    ? `<div class="hint" style="color:var(--verde);font-weight:600">☁️ Conectado a Supabase (${(SB_URL||'').replace('https://','').slice(0,24)}…)</div><div style="margin-top:8px"><button class="btn btn-ghost" style="width:auto;padding:8px 14px" onclick="desconectarNube()">Desconectar</button></div>`
+    : `<div class="store-closed">📴 Modo LOCAL: sin credenciales. <div style="margin-top:8px"><button class="btn btn-ghost" style="width:auto;padding:8px 14px" onclick="conectarNube()">🔗 Conectar a Supabase</button></div></div>`;
   return `<div class="panel">
     <h3>Conexión</h3>
     <div class="ph-sub">Dónde se guardan los datos.</div>

@@ -670,8 +670,8 @@
    Si quedan vacías, la app funciona 100% local (como antes).
    (Supabase → Project Settings → API)
    ============================================================ */
-const SUPABASE_URL = '';        // ej: https://xxxx.supabase.co
-const SUPABASE_ANON_KEY = '';   // ej: eyJhbGciOi...
+const SUPABASE_URL = 'https://ifnvndqudynyngeuiytd.supabase.co';        // ej: https://xxxx.supabase.co
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlmbnZuZHF1ZHlueW5nZXVpeXRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwNjY2MzIsImV4cCI6MjA5NTY0MjYzMn0.s7t8X9GHk-VqHIP9g7XcHgXtSY344ygiwVDGyZkwvnI';   // ej: eyJhbGciOi...
 let sb = null;
 try{
   if(SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase && window.supabase.createClient){

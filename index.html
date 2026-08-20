@@ -1576,7 +1576,9 @@ function renderAdmin(){
       <span class="hint" style="align-self:center;margin-right:8px">👤 ${esc(u.nombre||u.user||'')}</span>
       <button onclick="logout()">Salir</button>
     </div>
-    ${cloudEnabled()?'<div class="hint" style="margin:-6px 0 12px">☁️ Modo nube: catálogo, pedidos y ediciones se sincronizan con Supabase. Los pedidos entran en vivo.</div>':''}
+    ${cloudEnabled()
+        ? '<div class="hint" style="margin:-6px 0 12px;color:var(--verde);font-weight:600">☁️ Conectado a Supabase — datos compartidos y en vivo.</div>'
+        : '<div class="store-closed" style="margin:-2px 0 12px">📴 <b>Modo LOCAL</b> (sin Supabase): los usuarios y pedidos se guardan solo en <b>este dispositivo</b> y no se ven en otros. Cargá SUPABASE_URL y ANON_KEY para compartir.</div>'}
     <div id="adminBody"></div>`;
   if(t==='pedidos')renderPedidos();
   else if(t==='productos')renderProductosAdmin();
@@ -1757,6 +1759,7 @@ function renderPedidos(){
     sf+=`<button class="sf ${f===k?'active':''}" onclick="setFiltro('${k}')">${k!=='todos'?`<span class="dot" style="background:${c}"></span>`:''}${esc(l)} (${count})</button>`;
   });
   sf+=`</div>`;
+  if(cloudStaff()) sf+=`<div style="margin:0 0 10px"><button class="btn btn-ghost" style="width:auto;padding:8px 14px" onclick="refrescarNube()">🔄 Actualizar</button></div>`;
   sf+=`<div class="search" style="margin:0 0 14px"><span class="ic">🔎</span><input id="pedSearch" placeholder="Buscar por N° de pedido, cliente o teléfono…" value="${esc(state.admin.pedQ||'')}" oninput="filtrarPedidos()"></div>`;
   body.innerHTML=sf+`<div id="pedList">${pedidosRows()}</div>`;
 }
@@ -1806,6 +1809,7 @@ function pedidosRows(){
     }).join('');
 }
 function setFiltro(f){state.admin.filtro=f;renderPedidos();}
+async function refrescarNube(){ if(!cloudStaff())return; toast('Actualizando…'); await cargarPedidosCloud(); await cargarClientesCloud(); renderAdmin(); }
 function avanzar(n){
   const o=ORDERS.find(x=>x.n===n);if(!o)return;
   const next=estadoNextId(o.estado);if(!next)return;
@@ -2822,7 +2826,15 @@ function fallbackCopy(text,cb){ try{const t=document.createElement('textarea');t
 
 /* ---- Datos: JSON + Excel + reset ---- */
 function cfgDatos(){
+  const nube = cloudEnabled()
+    ? `<div class="hint" style="color:var(--verde);font-weight:600">☁️ Conectado a Supabase (${(SUPABASE_URL||'').replace('https://','').slice(0,24)}…)</div>`
+    : `<div class="store-closed">📴 Modo LOCAL: SUPABASE_URL / ANON_KEY vacías. Editá el HTML y pegá tus credenciales para compartir usuarios y pedidos entre dispositivos.</div>`;
   return `<div class="panel">
+    <h3>Conexión</h3>
+    <div class="ph-sub">Dónde se guardan los datos.</div>
+    ${nube}
+  </div>
+  <div class="panel">
     <h3>Copia de seguridad (JSON)</h3>
     <div class="ph-sub">Exportá todo (config, productos, pedidos, clientes y usuarios) para respaldar o mudar de dispositivo.</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">

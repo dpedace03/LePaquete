@@ -2,7 +2,11 @@
 <html lang="es-AR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#2E7D46">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>El Almacén — Pedidos y Delivery</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -31,6 +35,8 @@
   }
   *{box-sizing:border-box}
   html,body{margin:0;padding:0}
+  body{overflow-x:hidden;-webkit-text-size-adjust:100%}
+  .topbar-inner{padding-top:calc(12px + env(safe-area-inset-top))}
   body{
     background:var(--paper);
     color:var(--ink);
@@ -584,8 +590,41 @@
   @media (max-width:640px){
     .charts{grid-template-columns:1fr}
     .brand-txt p{display:none}
-    .tab{padding:8px 12px}
-    .wrap{padding:16px 14px 80px}
+    .topbar-inner{padding:calc(10px + env(safe-area-inset-top)) 12px 10px;gap:9px}
+    .brand{gap:9px;min-width:0}
+    .brand-mark{width:38px;height:38px;font-size:18px;border-radius:10px}
+    .brand-txt h1{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42vw}
+    .brand-hours{font-size:10.5px}
+    .topbar-spacer{flex:0 0 4px}
+    .tabs{gap:2px;padding:3px}
+    .tab{padding:7px 10px;font-size:13px}
+    .cart-btn{padding:9px 11px;font-size:14px;gap:4px}
+    .cart-lbl{display:none}
+    .wrap{padding:14px 12px calc(84px + env(safe-area-inset-bottom))}
+    .hero{padding:20px 18px;border-radius:16px;margin-bottom:16px}
+    .hero p{font-size:14px}
+    .controls{gap:8px;margin-bottom:12px}
+    .grid{grid-template-columns:repeat(2,1fr);gap:10px}
+    .card-body{padding:11px 11px 12px;gap:5px}
+    .card-name{font-size:14px}
+    .card-desc{font-size:12px}
+    .promo-row{grid-template-columns:1fr}
+    .admin-nav{gap:4px;padding:4px;-webkit-overflow-scrolling:touch}
+    .admin-nav>button{flex:none}
+    .admin-nav>.hint{display:none}
+    .panel{padding:14px;border-radius:14px}
+    .subnav{-webkit-overflow-scrolling:touch}
+    .status-filter{-webkit-overflow-scrolling:touch}
+    .ptable{font-size:13px}
+    .modal{width:100%;max-height:92vh;padding:20px}
+    .drawer-foot{padding-bottom:calc(16px + env(safe-area-inset-bottom))}
+    .admin-lock{margin:32px auto;padding:24px}
+    input,select,textarea{font-size:16px}   /* evita el zoom automático de iOS */
+    .icon-btn{min-width:38px;min-height:38px}
+  }
+  @media (max-width:360px){
+    .grid{grid-template-columns:1fr}
+    .brand-txt h1{max-width:38vw}
   }
   @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
   :focus-visible{outline:3px solid var(--mostaza);outline-offset:2px;border-radius:6px}
@@ -609,7 +648,7 @@
       <button class="tab" id="tab-admin" onclick="setView('admin')">Panel</button>
     </div>
     <button class="cart-btn" id="cartBtn" onclick="openCart()">
-      <span>🛒 Pedido</span>
+      <span aria-hidden="true">🛒</span><span class="cart-lbl"> Pedido</span>
       <span class="cart-badge hidden" id="cartBadge">0</span>
     </button>
   </div>

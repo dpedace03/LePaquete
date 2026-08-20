@@ -1,0 +1,87 @@
+# El Almacén — Base de datos en Supabase
+
+## Cómo cargarla
+1. Entrá a tu proyecto en **supabase.com** → **SQL Editor** → **New query**.
+2. Pegá todo el contenido de `supabase_el_almacen.sql` y tocá **Run**.
+3. Listo: crea tablas, índices, seguridad (RLS), la función `crear_pedido()` y los datos de ejemplo.
+   - El script es **re-ejecutable**: al principio borra las tablas si ya existían.
+
+## Qué crea
+- **config**: una sola fila con nombre, portada, logo, horarios, cierre manual y ajustes de diseño (JSON).
+- **categorias, formas_pago, tipos_envio, estados_pedido**: los catálogos editables.
+- **productos** y **promos** (+ `promo_items`): el catálogo de la tienda.
+- **clientes**, **usuarios** (login del panel), **pedidos** (+ `pedido_items`).
+
+## Seguridad (RLS) — ya viene configurada
+- **Público (anon)**: puede **leer** el escaparate (config, productos, promos, catálogos) y **crear pedidos** solo a través de la función `crear_pedido()` (no puede tocar tablas directamente).
+- **Staff (usuarios logueados con Supabase Auth)**: gestiona todo.
+
+## Crear un pedido desde la tienda (ejemplo supabase-js)
+```js
+const { data, error } = await supabase.rpc('crear_pedido', {
+  p_nombre: 'Marta Gómez',
+  p_tel: '1145550011',
+  p_dir: 'Belgrano 240',
+  p_tipo: 'delivery',
+  p_pago: 'efectivo',
+  p_nota: '',
+  p_items: [
+    { producto_id: 'p01', nombre: 'Jamón cocido', unidad: 'kg', precio: 12800, qty: 0.5, es_promo: false },
+    { producto_id: 'promo1', nombre: 'Promo: Combo Picada', unidad: 'un', precio: 13900, qty: 1, es_promo: true }
+  ]
+});
+// data = número de pedido (n). El estado inicial y el costo de envío los calcula la función.
+```
+
+## Leer el catálogo (tienda)
+```js
+const { data: productos } = await supabase.from('productos').select('*').eq('activo', true).order('orden');
+const { data: cfg }       = await supabase.from('config').select('*').single();
+```
+
+## Nota importante sobre los usuarios / login
+La tabla `usuarios` (con `pass` en texto) replica el login simple de la app **para la demo**.
+Para producción real conviene usar **Supabase Auth** (email/clave o teléfono) y una tabla `perfiles`
+ligada a `auth.users` con el campo `rol`. Cuando quieras, adapto la app para:
+1. Login/registro de clientes con Supabase Auth.
+2. Leer/guardar todo contra estas tablas (reemplazando el localStorage).
+3. Realtime para que el panel vea los pedidos entrar en vivo.
+
+## Mapa app → base de datos
+| App (localStorage)      | Tabla Supabase                    |
+|-------------------------|-----------------------------------|
+| CONFIG (marca/hero/ui…) | `config` (fila única)             |
+| CONFIG.cats             | `categorias`                      |
+| CONFIG.pagos            | `formas_pago`                     |
+| CONFIG.envios           | `tipos_envio`                     |
+| CONFIG.estados          | `estados_pedido`                  |
+| CONFIG.promos           | `promos` + `promo_items`          |
+| PRODUCTS                | `productos`                       |
+| CLIENTES                | `clientes`                        |
+| USERS                   | `usuarios`                        |
+| ORDERS                  | `pedidos` + `pedido_items`        |
+
+---
+
+# Conectar la app (Fase 1 — ya integrada)
+
+La app ya trae integración con Supabase. Para activarla:
+
+1. Abrí `el-almacen.html` y, arriba de todo del `<script>`, completá:
+   ```js
+   const SUPABASE_URL = 'https://TU-PROYECTO.supabase.co';
+   const SUPABASE_ANON_KEY = 'TU_ANON_KEY';
+   ```
+   (Supabase → Project Settings → API → Project URL y anon public key.)
+2. Guardá y abrí la app. Vas a ver en consola `☁ Catálogo cargado desde Supabase`.
+
+**Qué hace en modo nube (Fase 1):**
+- La tienda **lee** nombre, portada, rubros, pagos, envíos, estados, productos y promos **desde Supabase**.
+- Al confirmar, el pedido se crea en Supabase con la función `crear_pedido()` (calcula estado inicial, costo de envío y da de alta al cliente).
+- Si las credenciales están vacías o falla la conexión, la app usa **datos locales** (todo sigue funcionando como antes).
+
+**Qué falta (Fase 2, cuando quieras):**
+- **Supabase Auth** para el panel del dueño/empleados y para clientes, de modo que:
+  - la edición del catálogo/config desde el panel **sincronice** a la nube (hoy la RLS bloquea escrituras anónimas, por seguridad);
+  - el panel liste los **pedidos en vivo** (Realtime) y el cliente vea **su historial** en cualquier dispositivo.
+- Reemplazar la tabla `usuarios` (login simple) por `auth.users` + `perfiles(rol)`.

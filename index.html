@@ -1075,20 +1075,19 @@ async function cloudPushAll(){
 }
 async function sbSetEstadoCloud(n,estado){ if(!cloudStaff())return; try{const {error}=await sb.from('pedidos').update({estado}).eq('n',n); if(error)console.warn(error.message);}catch(e){console.warn(e);} }
 
-async function cargarPedidosCloud(){
-  if(!cloudEnabled())return;
-  try{
-    const {data:peds,error}=await sb.from('pedidos').select('*').order('ts',{ascending:false}).limit(500);
-    if(error){console.warn(error.message);return;}
-    const ns=(peds||[]).map(p=>p.n); let items=[];
-    if(ns.length){ const r=await sb.from('pedido_items').select('*').in('pedido_n',ns); items=r.data||[]; }
-    ORDERS=(peds||[]).map(p=>({
-      n:p.n, ts:p.ts, cliente:{nombre:p.cliente_nombre,tel:p.cliente_tel,dir:p.cliente_dir},
-      tipo:p.tipo, pago:p.pago, estado:p.estado, nota:p.nota||'',
-      items:items.filter(i=>i.pedido_n===p.n).map(i=>({id:i.producto_id,nombre:i.nombre,unidad:i.unidad,precio:Number(i.precio),qty:Number(i.qty),esPromo:i.es_promo}))
-    }));
-  }catch(e){console.warn(e);}
+async function _fetchPedidos(limit){
+  const {data:peds,error}=await sb.from('pedidos').select('*').order('ts',{ascending:false}).limit(limit||500);
+  if(error){console.warn(error.message);return [];}
+  const ns=(peds||[]).map(p=>p.n); let items=[];
+  if(ns.length){ const r=await sb.from('pedido_items').select('*').in('pedido_n',ns); items=r.data||[]; }
+  return (peds||[]).map(p=>({
+    n:p.n, ts:p.ts, cliente:{nombre:p.cliente_nombre,tel:p.cliente_tel,dir:p.cliente_dir},
+    tipo:p.tipo, pago:p.pago, estado:p.estado, nota:p.nota||'',
+    items:items.filter(i=>i.pedido_n===p.n).map(i=>({id:i.producto_id,nombre:i.nombre,unidad:i.unidad,precio:Number(i.precio),qty:Number(i.qty),esPromo:i.es_promo}))
+  }));
 }
+async function cargarPedidosCloud(){ if(!cloudEnabled())return; try{ ORDERS=await _fetchPedidos(500); }catch(e){console.warn(e);} }
+async function cargarMisPedidosCloud(){ if(!cloudEnabled())return; try{ ORDERS=await _fetchPedidos(200); }catch(e){console.warn(e);} } // RLS filtra por cliente_uid
 async function cargarClientesCloud(){
   if(!cloudStaff())return;
   try{ const {data}=await sb.from('clientes').select('*').order('created_at',{ascending:false}); if(data)CLIENTES=data.map(outClienteIn); }catch(e){console.warn(e);}
@@ -1113,13 +1112,22 @@ async function entrarComoStaff(perfil){
   state.admin.auth=true; state.admin.user=perfil;
   await cargarPedidosCloud(); await cargarClientesCloud(); suscribirPedidos(); renderAdmin();
 }
-async function restaurarSesionStaff(){
+async function entrarComoCliente(perfil){
+  state.admin.auth=true; state.admin.user=perfil;
+  state.checkout.nombre=perfil.nombre||state.checkout.nombre;
+  state.checkout.tel=perfil.tel||state.checkout.tel;
+  await cargarMisPedidosCloud(); suscribirMisPedidos(perfil.id); renderAdmin();
+}
+async function restaurarSesion(){
   if(!cloudEnabled())return;
-  const perfil=await getMiPerfil();
-  if(perfil && ['admin','empleado'].includes(perfil.rol)){
-    state.admin.user=perfil; state.admin.auth=false; // se activa al renderizar panel; cargamos datos
-    state.admin.auth=true;
+  const perfil=await getMiPerfil(); if(!perfil)return;
+  if(['admin','empleado'].includes(perfil.rol)){
+    state.admin.auth=true; state.admin.user=perfil;
     await cargarPedidosCloud(); await cargarClientesCloud(); suscribirPedidos();
+  } else if(perfil.rol==='cliente'){
+    state.admin.auth=true; state.admin.user=perfil;
+    state.checkout.nombre=perfil.nombre||''; state.checkout.tel=perfil.tel||'';
+    await cargarMisPedidosCloud(); suscribirMisPedidos(perfil.id);
   }
 }
 let _canal=null;
@@ -1135,15 +1143,38 @@ function suscribirPedidos(){
   }catch(e){console.warn(e);}
 }
 function desuscribirPedidos(){ try{ if(_canal){sb.removeChannel(_canal);_canal=null;} }catch(e){} }
-function authStaffHTML(){
+function suscribirMisPedidos(uid){
+  if(!cloudEnabled()||_canal||!uid)return;
+  try{
+    _canal=sb.channel('mis-pedidos')
+      .on('postgres_changes',{event:'*',schema:'public',table:'pedidos',filter:'cliente_uid=eq.'+uid}, async ()=>{
+        await cargarMisPedidosCloud();
+        if(state.admin.auth && (state.admin.user||{}).rol==='cliente') renderAdmin();
+      }).subscribe();
+  }catch(e){console.warn(e);}
+}
+function authCloudHTML(){
+  if(state.authMode==='register'){
+    return `<div class="admin-lock">
+      <div class="em">🙋</div>
+      <h3>Crear cuenta</h3>
+      <p>Registrate para ver y repetir tus pedidos desde cualquier dispositivo.</p>
+      <div class="field"><label style="text-align:left">Nombre y apellido</label><input id="cNom" placeholder="Ej: Marta Gómez"></div>
+      <div class="field"><label style="text-align:left">Teléfono / WhatsApp</label><input id="cTel" placeholder="11 5555 0011"></div>
+      <div class="field"><label style="text-align:left">Email</label><input id="cEmail" type="email" placeholder="vos@correo.com"></div>
+      <div class="field"><label style="text-align:left">Contraseña</label><input id="cPass" type="password" placeholder="mínimo 6 caracteres" onkeydown="if(event.key==='Enter')doRegister()"></div>
+      <button class="btn btn-primary" onclick="doRegister()">Crear cuenta</button>
+      <p style="margin-top:14px;font-size:13px">¿Ya tenés cuenta? <button class="linklike" onclick="authMode('login')">Iniciar sesión</button></p>
+    </div>`;
+  }
   return `<div class="admin-lock">
     <div class="em">🔐</div>
-    <h3>Panel de ${esc(CONFIG.nombre)}</h3>
-    <p>Ingreso del equipo (dueño / empleados). Los clientes compran sin registrarse.</p>
+    <h3>Ingresá a ${esc(CONFIG.nombre)}</h3>
+    <p>Clientes: para ver y repetir tus pedidos. Equipo: gestión del negocio.</p>
     <div class="field"><label style="text-align:left">Email</label><input id="admEmail" type="email" placeholder="vos@correo.com" onkeydown="if(event.key==='Enter')tryLogin()"></div>
     <div class="field"><label style="text-align:left">Contraseña</label><input id="admPass" type="password" placeholder="contraseña" onkeydown="if(event.key==='Enter')tryLogin()"></div>
     <button class="btn btn-primary" onclick="tryLogin()">Entrar</button>
-    <p style="margin-top:12px;font-size:12px;color:var(--ink-soft)">Se crea en Supabase → Authentication → Users y se marca como admin.</p>
+    <p style="margin-top:14px;font-size:13px">¿Cliente nuevo? <button class="linklike" onclick="authMode('register')">Creá tu cuenta</button></p>
   </div>`;
 }
 
@@ -1520,8 +1551,8 @@ function renderAdmin(){
   const v=document.getElementById('adminView');
   if(!state.admin.auth){
     if(cloudEnabled()){
-      v.innerHTML = authStaffHTML();
-      setTimeout(()=>{const i=document.getElementById('admEmail');if(i)i.focus();},50);
+      v.innerHTML = authCloudHTML();
+      setTimeout(()=>{const i=document.getElementById(state.authMode==='register'?'cNom':'admEmail');if(i)i.focus();},50);
     } else {
       v.innerHTML = (state.authMode==='register') ? authRegisterHTML() : authLoginHTML();
       setTimeout(()=>{const i=document.getElementById(state.authMode==='register'?'rgNom':'admUser');if(i)i.focus();},50);
@@ -1585,8 +1616,14 @@ async function tryLogin(){
   if(cloudEnabled()){
     const email=(val('admEmail')||'').trim(); const pw=val('admPass')||'';
     if(!email||!pw){toast('⚠ Completá email y contraseña');return;}
-    try{ const perfil=await sbLoginStaff(email,pw); await entrarComoStaff(perfil); toast('✓ Hola '+(perfil.nombre||perfil.email)); }
-    catch(e){ toast('⚠ '+((e&&e.message)||'No se pudo entrar')); }
+    try{
+      const {error}=await sb.auth.signInWithPassword({email,password:pw});
+      if(error) throw error;
+      const perfil=await getMiPerfil(); if(!perfil) throw new Error('No se pudo cargar tu perfil');
+      if(['admin','empleado'].includes(perfil.rol)) await entrarComoStaff(perfil);
+      else await entrarComoCliente(perfil);
+      toast('✓ Hola '+(perfil.nombre||perfil.email));
+    }catch(e){ toast('⚠ '+((e&&e.message)||'No se pudo entrar')); }
     return;
   }
   const u=(val('admUser')||'').trim();
@@ -1598,7 +1635,26 @@ async function tryLogin(){
     renderAdmin();toast('✓ Hola '+(found.nombre||found.user));
   } else toast('⚠ Usuario o contraseña incorrectos');
 }
-function doRegister(){
+async function doRegister(){
+  if(cloudEnabled()){
+    const nombre=(val('cNom')||'').trim(), tel=(val('cTel')||'').trim(), email=(val('cEmail')||'').trim(), pass=val('cPass')||'';
+    if(!nombre){toast('⚠ Poné tu nombre');return;}
+    if(!email){toast('⚠ Falta el email');return;}
+    if(!pass||pass.length<6){toast('⚠ La contraseña necesita 6+ caracteres');return;}
+    try{
+      const {data,error}=await sb.auth.signUp({email,password:pass,options:{data:{nombre,tel}}});
+      if(error) throw error;
+      if(data && data.session){
+        const perfil=await getMiPerfil();
+        await entrarComoCliente(perfil||{id:(data.user||{}).id,email,nombre,rol:'cliente',tel});
+        toast('✓ Cuenta creada. ¡Bienvenido/a '+nombre.split(' ')[0]+'!');
+      } else {
+        state.authMode='login'; renderAdmin();
+        toast('✓ Cuenta creada. Revisá tu email para confirmar y después iniciá sesión.');
+      }
+    }catch(e){ toast('⚠ '+((e&&e.message)||'No se pudo crear la cuenta')); }
+    return;
+  }
   const nombre=val('rgNom').trim(), tel=val('rgTel').trim(), user=val('rgUser').trim(), pass=val('rgPass');
   if(!nombre){toast('⚠ Poné tu nombre');return;}
   if(!tel){toast('⚠ Falta el teléfono');return;}
@@ -1632,7 +1688,7 @@ function renderClientePanel(){
   const u=state.admin.user||{};
   const tb=document.getElementById('tab-admin'); if(tb)tb.textContent='Mi cuenta';
   const tel=(u.tel||'').trim();
-  const mis=ORDERS.filter(o=>tel && (o.cliente.tel||'').trim()===tel).sort((a,b)=>new Date(b.ts)-new Date(a.ts));
+  const mis=(cloudEnabled()?ORDERS.slice():ORDERS.filter(o=>tel && (o.cliente.tel||'').trim()===tel)).sort((a,b)=>new Date(b.ts)-new Date(a.ts));
   const cards = mis.length ? mis.map(o=>{
     const e=estadoById(o.estado), env=envioById(o.tipo);
     const total=o.items.reduce((s,i)=>s+i.precio*i.qty,0)+(env.costo||0);
@@ -2867,7 +2923,7 @@ function importarExcel(input){
   let cloud=false;
   if(cloudEnabled()){
     try{ cloud = await cloudLoad(); }catch(e){ console.error(e); cloud=false; }
-    if(cloud){ console.log('☁ Catálogo cargado desde Supabase'); await restaurarSesionStaff(); }
+    if(cloud){ console.log('☁ Catálogo cargado desde Supabase'); await restaurarSesion(); }
     else { toast('⚠ Sin conexión a la nube: uso datos locales'); }
   }
   if(!cloud){ const hadDB=loadDB(); normalizeConfig(); if(!hadDB){/* seeds ya cargadas */} }

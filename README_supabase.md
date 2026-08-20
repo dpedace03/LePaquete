@@ -115,3 +115,26 @@ Requisitos: haber corrido `supabase_el_almacen.sql` (Fase 1) y ahora **`supabase
 
 ### Fase 3 (opcional, futura)
 - Login/registro de **clientes con Supabase Auth** para que vean su **historial y repitan pedidos** desde cualquier dispositivo (la base ya quedó lista: `cliente_uid` + policies de cliente).
+
+---
+
+# Fase 3 — Clientes con cuenta (ya integrada)
+
+No requiere SQL nuevo: usa lo de la Fase 2 (`perfiles`, `cliente_uid` y policies de cliente).
+
+### Cómo funciona (en modo nube)
+- En **Panel**, la pantalla de ingreso ofrece **Iniciar sesión** o **Crear tu cuenta** (cliente).
+- El **registro** usa Supabase Auth (`signUp` con email + contraseña + nombre + teléfono). El perfil se crea solo (trigger) con rol `cliente`.
+- Al **loguearse**, la app rutea por rol: staff → panel de gestión; cliente → **"Mi cuenta"** con **sus** pedidos (la RLS garantiza que ve solo los propios).
+- El cliente puede **repetir** cualquier pedido, y en el **checkout su nombre y teléfono vienen de la cuenta** (bloqueados). Los pedidos que hace logueado quedan ligados a él (`cliente_uid`).
+- **En vivo**: si cambiás el estado de su pedido desde el panel, lo ve actualizarse solo (Realtime filtrado por su usuario).
+- La sesión se **mantiene** entre recargas y dispositivos.
+
+### Recomendación de configuración (para que el alta sea fluida)
+Por defecto Supabase pide **confirmar el email**. Para una demo/tienda de barrio sin fricción:
+- Authentication → **Providers → Email** → desactivá **"Confirm email"** (o dejalo activo si querés verificación real; en ese caso, tras registrarse el cliente debe confirmar y luego iniciar sesión).
+
+### Resumen de fases
+- **Fase 1**: tienda lee catálogo/config de la nube + crea pedidos (anónimo). ✅
+- **Fase 2**: staff con Auth edita catálogo/config, ve pedidos en vivo, cambia estados. ✅
+- **Fase 3**: clientes con cuenta ven/repiten su historial desde cualquier dispositivo. ✅

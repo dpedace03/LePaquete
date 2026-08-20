@@ -1669,8 +1669,12 @@ async function doRegister(){
   save(); renderAdmin(); toast('✓ Cuenta creada. ¡Bienvenido/a '+nombre.split(' ')[0]+'!');
 }
 function logout(){
-  if(cloudEnabled()){ try{sb.auth.signOut();}catch(e){} desuscribirPedidos(); }
+  if(cloudEnabled()){ try{sb.auth.signOut();}catch(e){} desuscribirPedidos(); ORDERS=[]; }
   state.admin.auth=false;state.admin.user=null;state.authMode='login';
+  // limpiar carrito y datos personales: el próximo usuario empieza de cero
+  state.cart={}; state.promoCart={};
+  state.checkout.nombre=''; state.checkout.tel=''; state.checkout.dir=''; state.checkout.nota='';
+  refreshCartUI(); renderProducts();
   const tb=document.getElementById('tab-admin');if(tb)tb.textContent='Panel';
   renderAdmin();
 }

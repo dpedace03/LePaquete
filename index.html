@@ -1238,7 +1238,8 @@ function misComprasHTML(){
     <div class="field"><label style="text-align:left">Teléfono / WhatsApp</label><input id="miTel" inputmode="tel" autocomplete="tel" value="${esc(c.tel||'')}" placeholder="11 5555 0011" onkeydown="if(event.key==='Enter')verMisCompras()"></div>
     <div class="field"><label style="text-align:left">Tu nombre (opcional)</label><input id="miNom" value="${esc(c.nombre||'')}" placeholder="Ej: Marta Gómez"></div>
     <button class="btn btn-primary" onclick="verMisCompras()">Ver mis pedidos</button>
-    <p style="margin-top:14px;font-size:13px">¿Sos del equipo? <button class="linklike" onclick="irAStaff()">Ingresar como equipo</button></p>
+    <div style="height:10px"></div>
+    <button class="btn btn-ghost" onclick="irAStaff()">🔐 Ingresar como equipo</button>
   </div>`;
 }
 function staffCloudLoginHTML(){

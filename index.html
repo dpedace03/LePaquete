@@ -670,8 +670,8 @@
    Si quedan vacías, la app funciona 100% local (como antes).
    (Supabase → Project Settings → API)
    ============================================================ */
-const SUPABASE_URL = 'https://ifnvndqudynyngeuiytd.supabase.co';        // ej: https://xxxx.supabase.co
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlmbnZuZHF1ZHlueW5nZXVpeXRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwNjY2MzIsImV4cCI6MjA5NTY0MjYzMn0.s7t8X9GHk-VqHIP9g7XcHgXtSY344ygiwVDGyZkwvnI';   // ej: sb_publishable_... o eyJ...
+const SUPABASE_URL = '';        // ej: https://xxxx.supabase.co
+const SUPABASE_ANON_KEY = '';   // ej: sb_publishable_... o eyJ...
 // Podés dejarlas vacías y conectar desde la app (botón "Conectar a Supabase"),
 // que guarda las credenciales en ESTE dispositivo (localStorage).
 let SB_URL = SUPABASE_URL, SB_KEY = SUPABASE_ANON_KEY;
@@ -683,6 +683,15 @@ try{
   }
 }catch(e){ sb=null; }
 function cloudEnabled(){ return !!sb; }
+function authErrMsg(e){
+  const m=((e&&e.message)||'').toLowerCase();
+  if(m.includes('invalid login')||m.includes('invalid credentials')) return 'Email o contraseña incorrectos. ¿Ya creaste el usuario en Supabase → Authentication → Users? (admin/admin es solo del modo local)';
+  if(m.includes('email not confirmed')) return 'Falta confirmar el email. Confirmalo desde el mail, o desactivá "Confirm email" en Supabase → Authentication → Providers → Email.';
+  if(m.includes('api key')||m.includes('apikey')||m.includes('jwt')) return 'La clave de Supabase parece incorrecta. Revisá la Publishable/anon key.';
+  if(m.includes('failed to fetch')||m.includes('network')) return 'Sin conexión con Supabase. Revisá URL/clave e internet.';
+  if(m.includes('already registered')||m.includes('already exists')) return 'Ese email ya tiene cuenta. Probá iniciar sesión.';
+  return (e&&e.message)||'No se pudo completar';
+}
 function conectarNube(){
   openModal(`
     <h3>Conectar a Supabase</h3>
@@ -975,8 +984,10 @@ let state = {
   checkout:{tipo:'takeaway', pago:'efectivo'},
   admin:{auth:false, tab:'pedidos', filtro:'todos', user:null, pedQ:''},
   cfg:'general',   // sub-sección de Config
-  authMode:'login', // 'login' | 'register' (alta de cliente)
-  cliQ:'',         // búsqueda de clientes
+  authMode:'login',   // (legacy)
+  authView:'cliente', // 'cliente' (Mis compras por tel) | 'staff' (login equipo)
+  cliente:null,       // {nombre, tel} recordado en este dispositivo
+  cliQ:'',            // búsqueda de clientes
   edit:null,       // edición de pedido en curso
   rep:{desde:'', hasta:''},
   theme:'clasico',
@@ -986,6 +997,8 @@ let state = {
    Persistencia local (se guarda en este dispositivo)
    ============================================================ */
 const DB_KEY='almacen_db_v1';
+function loadCliente(){ try{const r=localStorage.getItem('almacen_cliente_v1'); if(r)state.cliente=JSON.parse(r);}catch(e){} }
+function saveCliente(){ try{ if(state.cliente)localStorage.setItem('almacen_cliente_v1',JSON.stringify(state.cliente)); else localStorage.removeItem('almacen_cliente_v1'); }catch(e){} }
 function save(){
   try{localStorage.setItem(DB_KEY, JSON.stringify({
     config:CONFIG, products:PRODUCTS, orders:ORDERS, seq:ORDER_SEQ,
@@ -1177,6 +1190,58 @@ function suscribirMisPedidos(uid){
       }).subscribe();
   }catch(e){console.warn(e);}
 }
+function misComprasHTML(){
+  const c=state.cliente||{};
+  return `<div class="admin-lock">
+    <div class="em">🛍️</div>
+    <h3>Mis compras</h3>
+    <p>Poné tu teléfono para ver y repetir tus pedidos. No hace falta contraseña.</p>
+    <div class="field"><label style="text-align:left">Teléfono / WhatsApp</label><input id="miTel" inputmode="tel" autocomplete="tel" value="${esc(c.tel||'')}" placeholder="11 5555 0011" onkeydown="if(event.key==='Enter')verMisCompras()"></div>
+    <div class="field"><label style="text-align:left">Tu nombre (opcional)</label><input id="miNom" value="${esc(c.nombre||'')}" placeholder="Ej: Marta Gómez"></div>
+    <button class="btn btn-primary" onclick="verMisCompras()">Ver mis pedidos</button>
+    <p style="margin-top:14px;font-size:13px">¿Sos del equipo? <button class="linklike" onclick="irAStaff()">Ingresar como equipo</button></p>
+  </div>`;
+}
+function staffCloudLoginHTML(){
+  return `<div class="admin-lock">
+    <div class="em">🔐</div>
+    <h3>Ingreso del equipo</h3>
+    <p>Dueño / empleados. Los clientes entran por «Mis compras».</p>
+    <div class="field"><label style="text-align:left">Email</label><input id="admEmail" type="email" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username" placeholder="vos@correo.com" onkeydown="if(event.key==='Enter')tryLogin()"></div>
+    <div class="field"><label style="text-align:left">Contraseña</label><input id="admPass" type="password" autocomplete="current-password" placeholder="contraseña" onkeydown="if(event.key==='Enter')tryLogin()"></div>
+    <button class="btn btn-primary" onclick="tryLogin()">Entrar</button>
+    <p style="margin-top:14px;font-size:13px"><button class="linklike" onclick="irACliente()">← Volver a Mis compras</button></p>
+  </div>`;
+}
+function staffLocalLoginHTML(){
+  return `<div class="admin-lock">
+    <div class="em">🔐</div>
+    <h3>Ingreso del equipo</h3>
+    <p>Modo local (demo): usuario <b>admin</b> / <b>admin</b>.</p>
+    <div class="field"><label style="text-align:left">Usuario</label><input id="admUser" placeholder="usuario" onkeydown="if(event.key==='Enter')tryLogin()"></div>
+    <div class="field"><label style="text-align:left">Contraseña</label><input id="admPass" type="password" autocomplete="current-password" placeholder="contraseña" onkeydown="if(event.key==='Enter')tryLogin()"></div>
+    <button class="btn btn-primary" onclick="tryLogin()">Entrar</button>
+    <p style="margin-top:14px;font-size:13px"><button class="linklike" onclick="irACliente()">← Volver a Mis compras</button></p>
+  </div>`;
+}
+function irAStaff(){ state.authView='staff'; renderAdmin(); }
+function irACliente(){ state.authView='cliente'; renderAdmin(); }
+async function verMisCompras(){
+  const tel=(val('miTel')||'').trim(); const nom=(val('miNom')||'').trim();
+  if(!tel){toast('⚠ Poné tu teléfono');return;}
+  state.cliente={nombre:nom||((state.cliente||{}).nombre)||'', tel}; saveCliente();
+  if(cloudEnabled()){
+    try{
+      const {data,error}=await sb.rpc('pedidos_por_tel',{p_tel:tel});
+      if(error) throw error;
+      ORDERS=(data||[]).map(pp=>({n:pp.n, ts:pp.ts, cliente:{nombre:pp.cliente_nombre,tel:pp.cliente_tel,dir:pp.cliente_dir}, tipo:pp.tipo, pago:pp.pago, estado:pp.estado, nota:pp.nota||'', items:(pp.items||[]).map(i=>({id:i.producto_id,nombre:i.nombre,unidad:i.unidad,precio:Number(i.precio),qty:Number(i.qty),esPromo:i.es_promo}))}));
+    }catch(e){ console.warn(e); toast('⚠ No se pudieron cargar tus pedidos'); return; }
+  }
+  state.admin.user={rol:'cliente', nombre:state.cliente.nombre, tel};
+  state.admin.auth=true;
+  state.checkout.nombre=state.cliente.nombre; state.checkout.tel=tel;
+  renderAdmin();
+}
 function authCloudHTML(){
   if(state.authMode==='register'){
     return `<div class="admin-lock">
@@ -1185,8 +1250,8 @@ function authCloudHTML(){
       <p>Registrate para ver y repetir tus pedidos desde cualquier dispositivo.</p>
       <div class="field"><label style="text-align:left">Nombre y apellido</label><input id="cNom" placeholder="Ej: Marta Gómez"></div>
       <div class="field"><label style="text-align:left">Teléfono / WhatsApp</label><input id="cTel" placeholder="11 5555 0011"></div>
-      <div class="field"><label style="text-align:left">Email</label><input id="cEmail" type="email" placeholder="vos@correo.com"></div>
-      <div class="field"><label style="text-align:left">Contraseña</label><input id="cPass" type="password" placeholder="mínimo 6 caracteres" onkeydown="if(event.key==='Enter')doRegister()"></div>
+      <div class="field"><label style="text-align:left">Email</label><input id="cEmail" type="email" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="email" placeholder="vos@correo.com"></div>
+      <div class="field"><label style="text-align:left">Contraseña</label><input id="cPass" type="password" autocomplete="new-password" placeholder="mínimo 6 caracteres" onkeydown="if(event.key==='Enter')doRegister()"></div>
       <button class="btn btn-primary" onclick="doRegister()">Crear cuenta</button>
       <p style="margin-top:14px;font-size:13px">¿Ya tenés cuenta? <button class="linklike" onclick="authMode('login')">Iniciar sesión</button></p>
     </div>`;
@@ -1195,8 +1260,8 @@ function authCloudHTML(){
     <div class="em">🔐</div>
     <h3>Ingresá a ${esc(CONFIG.nombre)}</h3>
     <p>Clientes: para ver y repetir tus pedidos. Equipo: gestión del negocio.</p>
-    <div class="field"><label style="text-align:left">Email</label><input id="admEmail" type="email" placeholder="vos@correo.com" onkeydown="if(event.key==='Enter')tryLogin()"></div>
-    <div class="field"><label style="text-align:left">Contraseña</label><input id="admPass" type="password" placeholder="contraseña" onkeydown="if(event.key==='Enter')tryLogin()"></div>
+    <div class="field"><label style="text-align:left">Email</label><input id="admEmail" type="email" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username" placeholder="vos@correo.com" onkeydown="if(event.key==='Enter')tryLogin()"></div>
+    <div class="field"><label style="text-align:left">Contraseña</label><input id="admPass" type="password" autocomplete="current-password" placeholder="contraseña" onkeydown="if(event.key==='Enter')tryLogin()"></div>
     <button class="btn btn-primary" onclick="tryLogin()">Entrar</button>
     <p style="margin-top:14px;font-size:13px">¿Cliente nuevo? <button class="linklike" onclick="authMode('register')">Creá tu cuenta</button></p>
   </div>`;
@@ -1441,6 +1506,7 @@ function goCheckout(){
   const envSel=envioById(co.tipo);
   const cu=clienteLogueado();
   if(cu){ co.nombre=cu.nombre||co.nombre; co.tel=cu.tel||co.tel; }
+  else if(state.cliente){ if(!co.nombre)co.nombre=state.cliente.nombre||''; if(!co.tel)co.tel=state.cliente.tel||''; }
   body.innerHTML=`
     <div class="field">
       <label>¿Cómo lo querés recibir?</label>
@@ -1490,6 +1556,7 @@ async function confirmarPedido(){
   const co=state.checkout;
   const cu=clienteLogueado();
   if(cu){ co.nombre=cu.nombre||co.nombre; co.tel=cu.tel||co.tel; }
+  else if(state.cliente){ if(!co.nombre)co.nombre=state.cliente.nombre||''; if(!co.tel)co.tel=state.cliente.tel||''; }
   const env=envioById(co.tipo);
   if(!co.nombre||!co.nombre.trim()){toast('⚠ Poné tu nombre');return;}
   if(!co.tel||!co.tel.trim()){toast('⚠ Falta el teléfono');return;}
@@ -1516,6 +1583,7 @@ async function confirmarPedido(){
   };
   ORDERS.unshift(order);
   upsertClienteDesdePedido(order);
+  state.cliente={nombre:order.cliente.nombre,tel:order.cliente.tel}; saveCliente();
   state.cart={}; state.promoCart={}; refreshCartUI(); renderProducts();
   if(!cloudEnabled()) save();
   mostrarTicket(order);
@@ -1574,12 +1642,12 @@ function whatsappPedido(n){
 function renderAdmin(){
   const v=document.getElementById('adminView');
   if(!state.admin.auth){
-    if(cloudEnabled()){
-      v.innerHTML = authCloudHTML();
-      setTimeout(()=>{const i=document.getElementById(state.authMode==='register'?'cNom':'admEmail');if(i)i.focus();},50);
+    if(state.authView==='staff'){
+      v.innerHTML = cloudEnabled()? staffCloudLoginHTML() : staffLocalLoginHTML();
+      setTimeout(()=>{const i=document.getElementById(cloudEnabled()?'admEmail':'admUser');if(i)i.focus();},50);
     } else {
-      v.innerHTML = (state.authMode==='register') ? authRegisterHTML() : authLoginHTML();
-      setTimeout(()=>{const i=document.getElementById(state.authMode==='register'?'rgNom':'admUser');if(i)i.focus();},50);
+      v.innerHTML = misComprasHTML();
+      setTimeout(()=>{const i=document.getElementById('miTel');if(i)i.focus();},50);
     }
     return;
   }
@@ -1618,7 +1686,7 @@ function authLoginHTML(){
     <h3>Ingresá a ${esc(CONFIG.nombre)}</h3>
     <p>Clientes: entrá para ver y repetir tus pedidos. Equipo: gestión del negocio.</p>
     <div class="field"><label style="text-align:left">Usuario</label><input id="admUser" placeholder="usuario" onkeydown="if(event.key==='Enter')tryLogin()"></div>
-    <div class="field"><label style="text-align:left">Contraseña</label><input id="admPass" type="password" placeholder="contraseña" onkeydown="if(event.key==='Enter')tryLogin()"></div>
+    <div class="field"><label style="text-align:left">Contraseña</label><input id="admPass" type="password" autocomplete="current-password" placeholder="contraseña" onkeydown="if(event.key==='Enter')tryLogin()"></div>
     <button class="btn btn-primary" onclick="tryLogin()">Entrar</button>
     <p style="margin-top:14px;font-size:13px">¿Sos cliente nuevo? <button class="linklike" onclick="authMode('register')">Creá tu cuenta</button></p>
     <p style="margin-top:6px;font-size:12px;color:var(--ink-soft)">Demo dueño: <b>admin</b>/<b>admin</b> · Demo cliente: <b>cliente</b>/<b>cliente</b></p>
@@ -1649,7 +1717,7 @@ async function tryLogin(){
       if(['admin','empleado'].includes(perfil.rol)) await entrarComoStaff(perfil);
       else await entrarComoCliente(perfil);
       toast('✓ Hola '+(perfil.nombre||perfil.email));
-    }catch(e){ toast('⚠ '+((e&&e.message)||'No se pudo entrar')); }
+    }catch(e){ toast('⚠ '+authErrMsg(e)); }
     return;
   }
   const u=(val('admUser')||'').trim();
@@ -1678,7 +1746,7 @@ async function doRegister(){
         state.authMode='login'; renderAdmin();
         toast('✓ Cuenta creada. Revisá tu email para confirmar y después iniciá sesión.');
       }
-    }catch(e){ toast('⚠ '+((e&&e.message)||'No se pudo crear la cuenta')); }
+    }catch(e){ toast('⚠ '+authErrMsg(e)); }
     return;
   }
   const nombre=val('rgNom').trim(), tel=val('rgTel').trim(), user=val('rgUser').trim(), pass=val('rgPass');
@@ -1700,6 +1768,7 @@ function logout(){
   // limpiar carrito y datos personales: el próximo usuario empieza de cero
   state.cart={}; state.promoCart={};
   state.checkout.nombre=''; state.checkout.tel=''; state.checkout.dir=''; state.checkout.nota='';
+  state.cliente=null; saveCliente(); state.authView='cliente';
   refreshCartUI(); renderProducts();
   const tb=document.getElementById('tab-admin');if(tb)tb.textContent='Panel';
   renderAdmin();
@@ -1746,7 +1815,7 @@ function renderClientePanel(){
   }).join('') : '<div class="empty"><div class="big">🛍️</div><b>Todavía no tenés pedidos</b><div>Hacé tu primer pedido desde la tienda.</div></div>';
   v.innerHTML=`
     <div class="panel" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <div><h3 style="margin:0">Hola, ${esc(u.nombre||u.user)} 👋</h3><div class="hint">Estos son tus pedidos y su estado</div></div>
+      <div><h3 style="margin:0">Hola${(u.nombre||u.user)?", "+esc(u.nombre||u.user):""} 👋</h3><div class="hint">Estos son tus pedidos y su estado</div></div>
       <div style="flex:1"></div>
       <button class="btn btn-ghost" style="width:auto;padding:10px 16px" onclick="setView('store')">🛒 Ir a la tienda</button>
       <button class="btn btn-ghost" style="width:auto;padding:10px 16px" onclick="logout()">Salir</button>
@@ -2969,6 +3038,8 @@ function importarExcel(input){
   if(!cloud){ const hadDB=loadDB(); normalizeConfig(); if(!hadDB){/* seeds ya cargadas */} }
   // preferencia de tema (siempre local, es del dispositivo)
   try{const st=localStorage.getItem('almacen_theme');if(st&&themeById(st).id===st)state.theme=st;}catch(e){}
+  loadCliente();
+  if(state.cliente){ state.checkout.nombre=state.checkout.nombre||state.cliente.nombre||''; state.checkout.tel=state.checkout.tel||state.cliente.tel||''; }
   applyTheme();
   renderStoreChrome();
   renderChips();

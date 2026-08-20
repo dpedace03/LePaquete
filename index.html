@@ -670,8 +670,8 @@
    Si quedan vacías, la app funciona 100% local (como antes).
    (Supabase → Project Settings → API)
    ============================================================ */
-const SUPABASE_URL = 'https://ifnvndqudynyngeuiytd.supabase.co';        // ej: https://xxxx.supabase.co
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlmbnZuZHF1ZHlueW5nZXVpeXRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwNjY2MzIsImV4cCI6MjA5NTY0MjYzMn0.s7t8X9GHk-VqHIP9g7XcHgXtSY344ygiwVDGyZkwvnI';   // ej: eyJhbGciOi...
+const SUPABASE_URL = '';        // ej: https://xxxx.supabase.co
+const SUPABASE_ANON_KEY = '';   // ej: eyJhbGciOi...
 let sb = null;
 try{
   if(SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase && window.supabase.createClient){
@@ -967,6 +967,7 @@ function save(){
     config:CONFIG, products:PRODUCTS, orders:ORDERS, seq:ORDER_SEQ,
     clientes:CLIENTES, users:USERS, theme:state.theme
   }));}catch(e){}
+  if(typeof cloudStaff==='function' && cloudStaff()) cloudPushDebounced();
 }
 function loadDB(){
   try{
@@ -1033,6 +1034,117 @@ async function sbCrearPedido(co,env,items){
   });
   if(error) throw error;
   return data; // número de pedido (n)
+}
+
+/* ============================================================
+   NUBE — Fase 2: staff con Supabase Auth + escritura + realtime
+   ============================================================ */
+function cloudStaff(){ return cloudEnabled() && state.admin.auth && ['admin','empleado'].includes((state.admin.user||{}).rol); }
+
+const outCat    = (id,c,i)=>({id, nombre:c.nom, emoji:c.em, color:c.color, orden:i});
+const outPago   = (p,i)=>({id:p.id, nombre:p.nom, emoji:p.em, orden:i});
+const outEnvio  = (e,i)=>({id:e.id, nombre:e.nom, descripcion:e.desc||'', costo:Number(e.costo)||0, emoji:e.em, pide_dir:!!e.pideDir, orden:i});
+const outEstado = (e,i)=>({id:e.id, nombre:e.nom, color:e.color, orden:i});
+const outProd   = (p,i)=>({id:p.id, nombre:p.nombre, categoria_id:p.cat, precio:Number(p.precio)||0, unidad:p.unidad, emoji:p.em, descripcion:p.desc||'', activo:!!p.activo, orden:i});
+const outPromo  = (pr,i)=>({id:pr.id, nombre:pr.nombre, emoji:pr.em, descripcion:pr.desc||'', precio:Number(pr.precio)||0, activo:pr.activo!==false, orden:i});
+const outCliente= (c)=>({id:c.id, nombre:c.nombre, tel:c.tel||'', dir:c.dir||'', email:c.email||'', nota:c.nota||''});
+
+async function sbUpsert(table,rows,onConflict){
+  if(!cloudStaff()||!rows||(Array.isArray(rows)&&!rows.length))return;
+  try{ const {error}=await sb.from(table).upsert(rows, onConflict?{onConflict}:undefined); if(error)console.warn('upsert',table,error.message);}catch(e){console.warn('upsert',table,e);}
+}
+async function sbDelete(table,col,val){
+  if(!cloudStaff())return;
+  try{ const {error}=await sb.from(table).delete().eq(col,val); if(error)console.warn('delete',table,error.message);}catch(e){console.warn('delete',table,e);}
+}
+let _pushT=null;
+function cloudPushDebounced(){ if(!cloudStaff())return; clearTimeout(_pushT); _pushT=setTimeout(cloudPushAll,700); }
+async function cloudPushAll(){
+  if(!cloudStaff())return;
+  const c=CONFIG;
+  await sbUpsert('config',{id:1,nombre:c.nombre,marca:c.marca,sub:c.sub,hero_titulo:c.heroTit,hero_texto:c.heroTxt,hero_tags:c.heroTags||[],logo:c.logo||'',cerrado_manual:!!c.cerradoManual,horarios:c.horarios||[],ui:c.ui||{}},'id');
+  await sbUpsert('categorias',Object.entries(CONFIG.cats).map(([id,x],i)=>outCat(id,x,i)),'id');
+  await sbUpsert('formas_pago',CONFIG.pagos.map(outPago),'id');
+  await sbUpsert('tipos_envio',CONFIG.envios.map(outEnvio),'id');
+  await sbUpsert('estados_pedido',CONFIG.estados.map(outEstado),'id');
+  await sbUpsert('productos',PRODUCTS.map(outProd),'id');
+  await sbUpsert('promos',(CONFIG.promos||[]).map(outPromo),'id');
+  const pis=[]; (CONFIG.promos||[]).forEach(pr=>(pr.items||[]).forEach(it=>pis.push({promo_id:pr.id,producto_id:it.id,cantidad:Number(it.qty)||1})));
+  await sbUpsert('promo_items',pis,'promo_id,producto_id');
+  await sbUpsert('clientes',CLIENTES.map(outCliente),'id');
+}
+async function sbSetEstadoCloud(n,estado){ if(!cloudStaff())return; try{const {error}=await sb.from('pedidos').update({estado}).eq('n',n); if(error)console.warn(error.message);}catch(e){console.warn(e);} }
+
+async function cargarPedidosCloud(){
+  if(!cloudEnabled())return;
+  try{
+    const {data:peds,error}=await sb.from('pedidos').select('*').order('ts',{ascending:false}).limit(500);
+    if(error){console.warn(error.message);return;}
+    const ns=(peds||[]).map(p=>p.n); let items=[];
+    if(ns.length){ const r=await sb.from('pedido_items').select('*').in('pedido_n',ns); items=r.data||[]; }
+    ORDERS=(peds||[]).map(p=>({
+      n:p.n, ts:p.ts, cliente:{nombre:p.cliente_nombre,tel:p.cliente_tel,dir:p.cliente_dir},
+      tipo:p.tipo, pago:p.pago, estado:p.estado, nota:p.nota||'',
+      items:items.filter(i=>i.pedido_n===p.n).map(i=>({id:i.producto_id,nombre:i.nombre,unidad:i.unidad,precio:Number(i.precio),qty:Number(i.qty),esPromo:i.es_promo}))
+    }));
+  }catch(e){console.warn(e);}
+}
+async function cargarClientesCloud(){
+  if(!cloudStaff())return;
+  try{ const {data}=await sb.from('clientes').select('*').order('created_at',{ascending:false}); if(data)CLIENTES=data.map(outClienteIn); }catch(e){console.warn(e);}
+}
+const outClienteIn=c=>({id:c.id,nombre:c.nombre,tel:c.tel||'',dir:c.dir||'',email:c.email||'',nota:c.nota||''});
+
+async function getMiPerfil(){
+  try{
+    const {data:{user}}=await sb.auth.getUser(); if(!user)return null;
+    const {data:perfil}=await sb.from('perfiles').select('*').eq('id',user.id).maybeSingle();
+    return {id:user.id, email:user.email, nombre:(perfil&&perfil.nombre)||user.email, rol:(perfil&&perfil.rol)||'cliente', tel:(perfil&&perfil.tel)||''};
+  }catch(e){ return null; }
+}
+async function sbLoginStaff(email,pass){
+  const {error}=await sb.auth.signInWithPassword({email,password:pass});
+  if(error) throw error;
+  const perfil=await getMiPerfil();
+  if(!perfil || !['admin','empleado'].includes(perfil.rol)){ try{await sb.auth.signOut();}catch(e){} throw new Error('Esta cuenta no tiene acceso al panel (no es staff).'); }
+  return perfil;
+}
+async function entrarComoStaff(perfil){
+  state.admin.auth=true; state.admin.user=perfil;
+  await cargarPedidosCloud(); await cargarClientesCloud(); suscribirPedidos(); renderAdmin();
+}
+async function restaurarSesionStaff(){
+  if(!cloudEnabled())return;
+  const perfil=await getMiPerfil();
+  if(perfil && ['admin','empleado'].includes(perfil.rol)){
+    state.admin.user=perfil; state.admin.auth=false; // se activa al renderizar panel; cargamos datos
+    state.admin.auth=true;
+    await cargarPedidosCloud(); await cargarClientesCloud(); suscribirPedidos();
+  }
+}
+let _canal=null;
+function suscribirPedidos(){
+  if(!cloudEnabled()||_canal)return;
+  try{
+    _canal=sb.channel('pedidos-panel')
+      .on('postgres_changes',{event:'*',schema:'public',table:'pedidos'}, async (payload)=>{
+        await cargarPedidosCloud();
+        if(state.admin.auth && state.admin.tab==='pedidos') renderAdmin();
+        if(payload && payload.eventType==='INSERT') toast('🔔 ¡Nuevo pedido!');
+      }).subscribe();
+  }catch(e){console.warn(e);}
+}
+function desuscribirPedidos(){ try{ if(_canal){sb.removeChannel(_canal);_canal=null;} }catch(e){} }
+function authStaffHTML(){
+  return `<div class="admin-lock">
+    <div class="em">🔐</div>
+    <h3>Panel de ${esc(CONFIG.nombre)}</h3>
+    <p>Ingreso del equipo (dueño / empleados). Los clientes compran sin registrarse.</p>
+    <div class="field"><label style="text-align:left">Email</label><input id="admEmail" type="email" placeholder="vos@correo.com" onkeydown="if(event.key==='Enter')tryLogin()"></div>
+    <div class="field"><label style="text-align:left">Contraseña</label><input id="admPass" type="password" placeholder="contraseña" onkeydown="if(event.key==='Enter')tryLogin()"></div>
+    <button class="btn btn-primary" onclick="tryLogin()">Entrar</button>
+    <p style="margin-top:12px;font-size:12px;color:var(--ink-soft)">Se crea en Supabase → Authentication → Users y se marca como admin.</p>
+  </div>`;
 }
 
 /* ============================================================
@@ -1407,8 +1519,13 @@ function whatsappPedido(n){
 function renderAdmin(){
   const v=document.getElementById('adminView');
   if(!state.admin.auth){
-    v.innerHTML = (state.authMode==='register') ? authRegisterHTML() : authLoginHTML();
-    setTimeout(()=>{const i=document.getElementById(state.authMode==='register'?'rgNom':'admUser');if(i)i.focus();},50);
+    if(cloudEnabled()){
+      v.innerHTML = authStaffHTML();
+      setTimeout(()=>{const i=document.getElementById('admEmail');if(i)i.focus();},50);
+    } else {
+      v.innerHTML = (state.authMode==='register') ? authRegisterHTML() : authLoginHTML();
+      setTimeout(()=>{const i=document.getElementById(state.authMode==='register'?'rgNom':'admUser');if(i)i.focus();},50);
+    }
     return;
   }
   if((state.admin.user||{}).rol==='cliente'){ renderClientePanel(); return; }
@@ -1428,7 +1545,7 @@ function renderAdmin(){
       <span class="hint" style="align-self:center;margin-right:8px">👤 ${esc(u.nombre||u.user||'')}</span>
       <button onclick="logout()">Salir</button>
     </div>
-    ${cloudEnabled()?'<div class="hint" style="margin:-6px 0 12px">☁️ Modo nube activo: la tienda lee el catálogo de Supabase y los pedidos se guardan ahí. La edición desde el panel todavía no sincroniza (próxima fase).</div>':''}
+    ${cloudEnabled()?'<div class="hint" style="margin:-6px 0 12px">☁️ Modo nube: catálogo, pedidos y ediciones se sincronizan con Supabase. Los pedidos entran en vivo.</div>':''}
     <div id="adminBody"></div>`;
   if(t==='pedidos')renderPedidos();
   else if(t==='productos')renderProductosAdmin();
@@ -1464,7 +1581,14 @@ function authRegisterHTML(){
   </div>`;
 }
 function authMode(m){state.authMode=m;renderAdmin();}
-function tryLogin(){
+async function tryLogin(){
+  if(cloudEnabled()){
+    const email=(val('admEmail')||'').trim(); const pw=val('admPass')||'';
+    if(!email||!pw){toast('⚠ Completá email y contraseña');return;}
+    try{ const perfil=await sbLoginStaff(email,pw); await entrarComoStaff(perfil); toast('✓ Hola '+(perfil.nombre||perfil.email)); }
+    catch(e){ toast('⚠ '+((e&&e.message)||'No se pudo entrar')); }
+    return;
+  }
   const u=(val('admUser')||'').trim();
   const pw=val('admPass')||'';
   const found=USERS.find(x=>String(x.user).toLowerCase()===u.toLowerCase()&&x.pass===pw);
@@ -1488,7 +1612,12 @@ function doRegister(){
   state.checkout.nombre=nombre; state.checkout.tel=tel;
   save(); renderAdmin(); toast('✓ Cuenta creada. ¡Bienvenido/a '+nombre.split(' ')[0]+'!');
 }
-function logout(){state.admin.auth=false;state.admin.user=null;state.authMode='login';const tb=document.getElementById('tab-admin');if(tb)tb.textContent='Panel';renderAdmin();}
+function logout(){
+  if(cloudEnabled()){ try{sb.auth.signOut();}catch(e){} desuscribirPedidos(); }
+  state.admin.auth=false;state.admin.user=null;state.authMode='login';
+  const tb=document.getElementById('tab-admin');if(tb)tb.textContent='Panel';
+  renderAdmin();
+}
 function adminTab(t){state.admin.tab=t;renderAdmin();}
 function pendientesCount(){
   const ult=(CONFIG.estados[CONFIG.estados.length-1]||{}).id;
@@ -1620,7 +1749,7 @@ function setFiltro(f){state.admin.filtro=f;renderPedidos();}
 function avanzar(n){
   const o=ORDERS.find(x=>x.n===n);if(!o)return;
   const next=estadoNextId(o.estado);if(!next)return;
-  o.estado=next;save();
+  o.estado=next; if(cloudStaff())sbSetEstadoCloud(n,next); else save();
   const nom=estadoById(next).nom;
   toast(`Pedido N° ${String(n).padStart(3,'0')} → ${nom}`);
   if(/listo/i.test(nom) && (o.cliente.tel||'')){ avisarEstado(n); }
@@ -1640,7 +1769,7 @@ function avisarEstado(n){
 function cancelar(n){
   const o=ORDERS.find(x=>x.n===n);if(!o)return;
   if(!confirm('¿Cancelar el pedido N° '+String(n).padStart(3,'0')+'?'))return;
-  o.estado=CANCELADO.id;save();toast(`Pedido N° ${String(n).padStart(3,'0')} cancelado`);renderAdmin();
+  o.estado=CANCELADO.id; if(cloudStaff())sbSetEstadoCloud(n,CANCELADO.id); else save(); toast(`Pedido N° ${String(n).padStart(3,'0')} cancelado`);renderAdmin();
 }
 
 /* ---------- Productos (ABM) ---------- */
@@ -1679,7 +1808,7 @@ function toggleProducto(id){const p=prodById(id);p.activo=!p.activo;save();rende
 function borrarProducto(id){
   const p=prodById(id);
   if(!confirm(`¿Borrar "${p.nombre}"?`))return;
-  PRODUCTS=PRODUCTS.filter(x=>x.id!==id);save();renderProductosAdmin();renderProducts();toast('Producto borrado');
+  PRODUCTS=PRODUCTS.filter(x=>x.id!==id); if(cloudStaff())sbDelete('productos','id',id); save();renderProductosAdmin();renderProducts();toast('Producto borrado');
 }
 function editarProducto(id){
   const p=id?prodById(id):{id:null,nombre:'',cat:Object.keys(CONFIG.cats)[0],precio:'',unidad:'un',em:'🛒',desc:'',activo:true};
@@ -2204,7 +2333,7 @@ function guardarCliente(id){
 function borrarCliente(id){
   const c=CLIENTES.find(x=>x.id===id); if(!c)return;
   if(!confirm('¿Borrar a "'+c.nombre+'"?'))return;
-  CLIENTES=CLIENTES.filter(x=>x.id!==id);save();renderClientes();toast('Cliente borrado');
+  CLIENTES=CLIENTES.filter(x=>x.id!==id); if(cloudStaff())sbDelete('clientes','id',id); save();renderClientes();toast('Cliente borrado');
 }
 
 /* ============================================================
@@ -2330,7 +2459,8 @@ function borrarItem(arr,i){
   if(arr==='envios'&&CONFIG.envios.length<=1){toast('⚠ Dejá al menos un tipo de envío');return;}
   const it=CONFIG[arr][i]; if(!it)return;
   if(!confirm('¿Borrar "'+(it.nom||'')+'"?'))return;
-  CONFIG[arr].splice(i,1); save(); renderConfig(); toast('Eliminado');
+  const _tbl={pagos:'formas_pago',envios:'tipos_envio',estados:'estados_pedido'}[arr];
+  CONFIG[arr].splice(i,1); if(cloudStaff()&&_tbl)sbDelete(_tbl,'id',it.id); save(); renderConfig(); toast('Eliminado');
 }
 
 /* ---- Rubros ---- */
@@ -2358,7 +2488,7 @@ function borrarRubro(k){
   if(uso){toast('⚠ Hay '+uso+' producto(s) en este rubro. Reasignalos primero.');return;}
   if(Object.keys(CONFIG.cats).length<=1){toast('⚠ Dejá al menos un rubro');return;}
   if(!confirm('¿Borrar el rubro "'+(CONFIG.cats[k]||{}).nom+'"?'))return;
-  delete CONFIG.cats[k]; save(); renderConfig(); renderChips(); renderProducts(); toast('Rubro borrado');
+  delete CONFIG.cats[k]; if(cloudStaff())sbDelete('categorias','id',k); save(); renderConfig(); renderChips(); renderProducts(); toast('Rubro borrado');
 }
 
 /* ---- Pagos ---- */
@@ -2491,7 +2621,7 @@ function cfgPromos(){
   return panelCfg('Promos','Combos de varios productos a precio rebajado. Las activas aparecen en la portada de la tienda y se agregan al carrito.','editPromo(null)',rows);
 }
 function togglePromo(i){const pr=CONFIG.promos[i];if(!pr)return;pr.activo=(pr.activo===false);save();renderConfig();renderChips();renderProducts();}
-function borrarPromo(i){const pr=CONFIG.promos[i];if(!pr)return;if(!confirm('¿Borrar la promo "'+pr.nombre+'"?'))return;CONFIG.promos.splice(i,1);save();renderConfig();renderChips();renderProducts();toast('Promo borrada');}
+function borrarPromo(i){const pr=CONFIG.promos[i];if(!pr)return;if(!confirm('¿Borrar la promo "'+pr.nombre+'"?'))return;if(cloudStaff()){sbDelete('promo_items','promo_id',pr.id);sbDelete('promos','id',pr.id);}CONFIG.promos.splice(i,1);save();renderConfig();renderChips();renderProducts();toast('Promo borrada');}
 function editPromo(id){
   if(!CONFIG.promos)CONFIG.promos=[];
   const src=id?promoById(id):null;
@@ -2573,6 +2703,7 @@ function guardarPromo(){
   if(!CONFIG.promos)CONFIG.promos=[];
   if(pe.id){Object.assign(promoById(pe.id),data);}
   else{data.id=uid('promo');CONFIG.promos.push(data);}
+  const _pid=pe.id||data.id; if(cloudStaff())sbDelete('promo_items','promo_id',_pid);
   state.promoEdit=null;cerrarModal();save();renderConfig();renderChips();renderProducts();toast('✓ Promo guardada');
 }
 
@@ -2736,7 +2867,7 @@ function importarExcel(input){
   let cloud=false;
   if(cloudEnabled()){
     try{ cloud = await cloudLoad(); }catch(e){ console.error(e); cloud=false; }
-    if(cloud){ console.log('☁ Catálogo cargado desde Supabase'); }
+    if(cloud){ console.log('☁ Catálogo cargado desde Supabase'); await restaurarSesionStaff(); }
     else { toast('⚠ Sin conexión a la nube: uso datos locales'); }
   }
   if(!cloud){ const hadDB=loadDB(); normalizeConfig(); if(!hadDB){/* seeds ya cargadas */} }

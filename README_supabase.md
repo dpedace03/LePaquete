@@ -85,3 +85,33 @@ La app ya trae integración con Supabase. Para activarla:
   - la edición del catálogo/config desde el panel **sincronice** a la nube (hoy la RLS bloquea escrituras anónimas, por seguridad);
   - el panel liste los **pedidos en vivo** (Realtime) y el cliente vea **su historial** en cualquier dispositivo.
 - Reemplazar la tabla `usuarios` (login simple) por `auth.users` + `perfiles(rol)`.
+
+---
+
+# Fase 2 — Panel del dueño en la nube (ya integrada)
+
+Requisitos: haber corrido `supabase_el_almacen.sql` (Fase 1) y ahora **`supabase_fase2_auth.sql`**.
+
+### Pasos
+1. **Correr** `supabase_fase2_auth.sql` en el SQL Editor (crea `perfiles`, roles, RLS por rol y Realtime).
+2. **Crear tu usuario**: Authentication → Users → *Add user* (email + contraseña; activá *Auto Confirm*).
+3. **Hacerte admin** (SQL Editor, cambiando el email):
+   ```sql
+   update perfiles set rol='admin'
+     where id=(select id from auth.users where email='vos@correo.com');
+   ```
+   (Para un empleado: `rol='empleado'`.)
+4. Abrí la app (con `SUPABASE_URL`/`SUPABASE_ANON_KEY` cargadas). En **Panel** ahora te pide **email + contraseña**.
+
+### Qué hace en modo nube con staff logueado
+- **Edición del catálogo/config sincroniza** a Supabase (productos, rubros, pagos, envíos, estados, promos, horarios, diseño, logo…). Altas/ediciones = upsert; borrados = delete.
+- **Pedidos**: el panel los **lee de Supabase** y **entran en vivo (Realtime)** — aparece "🔔 ¡Nuevo pedido!" y se actualiza la lista sola.
+- **Cambiar estado** (avanzar/cancelar) se guarda en Supabase.
+- La **tienda pública** sigue anónima: lee catálogo y crea pedidos por `crear_pedido()` (que ahora también guarda `cliente_uid` si el que compra está logueado).
+
+### Seguridad
+- Las escrituras al catálogo/pedidos requieren estar logueado como **staff** (RLS con `is_staff()`); un cliente logueado NO puede tocar el catálogo.
+- Los clientes ya pueden ver **solo sus** pedidos (policy por `cliente_uid`) — se aprovechará en la Fase 3.
+
+### Fase 3 (opcional, futura)
+- Login/registro de **clientes con Supabase Auth** para que vean su **historial y repitan pedidos** desde cualquier dispositivo (la base ya quedó lista: `cliente_uid` + policies de cliente).
